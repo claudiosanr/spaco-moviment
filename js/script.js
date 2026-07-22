@@ -131,8 +131,8 @@ quizRestart.addEventListener("click", () => {
 const header = document.getElementById("site-header");
 window.addEventListener("scroll", () => {
   header.style.background = window.scrollY > 40
-    ? "rgba(20, 24, 26, 0.92)"
-    : "rgba(20, 24, 26, 0.75)";
+    ? "rgba(246, 241, 228, 0.94)"
+    : "rgba(246, 241, 228, 0.82)";
 });
 
 // Reveal on scroll
