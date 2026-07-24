@@ -18,39 +18,15 @@ document.addEventListener(
   { passive: false }
 );
 
-// Intro splash: logo gira na abertura, depois some
-(function initIntroSplash() {
-  const splash = document.getElementById("intro-splash");
-  const skipBtn = document.getElementById("intro-skip");
-
-  if (sessionStorage.getItem("introSeen")) {
-    splash.remove();
-    return;
-  }
-
-  document.body.style.overflow = "hidden";
-  let hasHidden = false;
-
-  function hide() {
-    if (hasHidden) return;
-    hasHidden = true;
-
-    splash.classList.add("is-hidden");
-    document.body.style.overflow = "";
-    sessionStorage.setItem("introSeen", "1");
-    window.setTimeout(() => splash.remove(), 500);
-  }
-
-  skipBtn.addEventListener("click", hide);
-  window.setTimeout(hide, 2200);
-})();
-
 function buildWhatsAppLink(message) {
   const base = WHATSAPP_NUMBER
     ? `https://wa.me/${WHATSAPP_NUMBER}`
     : `https://wa.me/`;
   return `${base}?text=${encodeURIComponent(message)}`;
 }
+
+const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
 // Mobile nav toggle
 const navToggle = document.getElementById("nav-toggle");
@@ -65,82 +41,131 @@ mainNav.querySelectorAll("a").forEach((link) => {
   link.addEventListener("click", () => mainNav.classList.remove("is-open"));
 });
 
-// Default WhatsApp CTA (footer/contact) with a generic opening message
+// Sticky header state
+const header = document.getElementById("site-header");
+function updateHeader() {
+  header.classList.toggle("is-scrolled", window.scrollY > 40);
+}
+
+// WhatsApp CTA (contact section)
 const contactWhatsApp = document.getElementById("contact-whatsapp");
 contactWhatsApp.href = buildWhatsAppLink(
   "Olá! Vim pelo site da Spaço Moviment e gostaria de marcar uma avaliação."
 );
 
-// Pré-atendimento quiz
-const quizCard = document.getElementById("quiz-card");
-const steps = quizCard.querySelectorAll(".quiz-step");
-const resultPanel = quizCard.querySelector(".quiz-result");
-const resultText = document.getElementById("quiz-result-text");
-const quizCta = document.getElementById("quiz-cta");
-const quizRestart = document.getElementById("quiz-restart");
-
-const answers = {};
-
-function goToStep(stepNumber) {
-  steps.forEach((step) => {
-    step.classList.toggle("is-active", step.dataset.step === String(stepNumber));
-  });
-  resultPanel.classList.remove("is-active");
-}
-
-function showResult() {
-  steps.forEach((step) => step.classList.remove("is-active"));
+// Contact form: coleta nome/telefone e encaminha pro WhatsApp (site estático, sem backend)
+const contactForm = document.getElementById("contact-form");
+contactForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const nome = document.getElementById("input-nome").value.trim();
+  const telefone = document.getElementById("input-telefone").value.trim();
+  if (!nome || !telefone) return;
 
   const message =
-    `Olá! Fiz a pré-avaliação no site da Spaço Moviment.\n` +
-    `Situação: ${answers.situacao}.\n` +
-    `Tempo: ${answers.tempo}.\n` +
+    `Olá! Me chamo ${nome} e vim pelo site da Spaço Moviment.\n` +
+    `Meu telefone: ${telefone}.\n` +
     `Gostaria de marcar minha avaliação.`;
 
-  resultText.textContent =
-    `Com base no que você respondeu (${answers.situacao}, ${answers.tempo}), ` +
-    `o próximo passo é uma avaliação presencial pra montar seu plano de ` +
-    `tratamento individualizado. Clique abaixo pra enviar suas respostas ` +
-    `direto pro WhatsApp e já marcar seu horário.`;
+  window.open(buildWhatsAppLink(message), "_blank", "noopener");
+});
 
-  quizCta.href = buildWhatsAppLink(message);
-  resultPanel.classList.add("is-active");
+// Smooth scroll (Lenis quando disponível; senão scroll nativo do navegador)
+let lenis = null;
+if (!prefersReducedMotion && typeof Lenis !== "undefined") {
+  lenis = new Lenis({
+    duration: 1.1,
+    smoothWheel: true,
+  });
 }
 
-quizCard.addEventListener("click", (event) => {
-  const option = event.target.closest(".quiz-option");
-  if (!option) return;
+// Herói cinematográfico: scroll controla o tempo do vídeo (scroll scrub)
+const heroSection = document.querySelector(".cinematic-hero");
+const heroVideo = document.getElementById("hero-video");
 
-  const stepEl = option.closest(".quiz-step");
-  const stepNumber = stepEl.dataset.step;
-
-  if (stepNumber === "1") {
-    answers.situacao = option.dataset.value;
-    goToStep(2);
-  } else if (stepNumber === "2") {
-    answers.tempo = option.dataset.value;
-    showResult();
+function updateHeroScrub() {
+  if (prefersReducedMotion) return;
+  const duration = heroVideo.duration;
+  if (!duration || Number.isNaN(duration) || heroVideo.readyState < 1) return;
+  const rect = heroSection.getBoundingClientRect();
+  const scrollable = rect.height - window.innerHeight;
+  if (scrollable <= 0) return;
+  const progress = clamp(-rect.top / scrollable, 0, 1);
+  const targetTime = progress * duration;
+  if (Math.abs(heroVideo.currentTime - targetTime) > 0.03) {
+    heroVideo.currentTime = targetTime;
   }
-});
+}
 
-quizRestart.addEventListener("click", () => {
-  goToStep(1);
-});
+// Sequências pinadas (filosofia, pilares, espaço): uma etapa ativa por vez, calculada pelo scroll
+function createPinnedSequence(section, stepSelector) {
+  if (!section) return null;
+  const steps = Array.from(section.querySelectorAll(stepSelector));
+  if (!steps.length) return null;
 
-// Sticky header shrink
-const header = document.getElementById("site-header");
-window.addEventListener("scroll", () => {
-  header.style.background = window.scrollY > 40
-    ? "rgba(246, 241, 228, 0.94)"
-    : "rgba(246, 241, 228, 0.82)";
-});
+  return function update() {
+    const rect = section.getBoundingClientRect();
+    const scrollable = rect.height - window.innerHeight;
+    const progress = clamp(scrollable > 0 ? -rect.top / scrollable : 0, 0, 1);
+    const activeIndex = Math.min(steps.length - 1, Math.floor(progress * steps.length));
+    steps.forEach((el, i) => el.classList.toggle("is-active", i === activeIndex));
+    return { progress, activeIndex, rect };
+  };
+}
 
-// Reveal on scroll
-const revealTargets = document.querySelectorAll(
-  ".service-card, .diff-item, .gallery-item, .testimonial-card, .about-photo, .quiz-card"
-);
-revealTargets.forEach((el) => el.setAttribute("data-reveal", ""));
+const philosophySection = document.querySelector(".philosophy");
+const updatePhilosophy = createPinnedSequence(philosophySection, ".philosophy-line");
 
+const pillarsSection = document.querySelector(".pillars");
+const updatePillars = createPinnedSequence(pillarsSection, ".pillar-card");
+const pillarsBgImg = document.querySelector(".pillars-bg img");
+
+const workspaceSection = document.querySelector(".workspace");
+const workspaceBgs = Array.from(document.querySelectorAll(".workspace-bg"));
+const workspaceCaptions = Array.from(document.querySelectorAll(".workspace-caption"));
+
+function updateWorkspace() {
+  if (!workspaceSection || !workspaceBgs.length) return;
+  const rect = workspaceSection.getBoundingClientRect();
+  const scrollable = rect.height - window.innerHeight;
+  const progress = clamp(scrollable > 0 ? -rect.top / scrollable : 0, 0, 1);
+  const activeIndex = Math.min(workspaceBgs.length - 1, Math.floor(progress * workspaceBgs.length));
+
+  workspaceBgs.forEach((el, i) => {
+    const isActive = i === activeIndex;
+    el.classList.toggle("is-active", isActive);
+    if (isActive && !prefersReducedMotion) {
+      const img = el.querySelector("img");
+      if (img) img.style.transform = `translateY(${rect.top * 0.12}px)`;
+    }
+  });
+  workspaceCaptions.forEach((el, i) => el.classList.toggle("is-active", i === activeIndex));
+}
+
+function updatePillarsParallax(rect) {
+  if (!pillarsBgImg || prefersReducedMotion) return;
+  pillarsBgImg.style.transform = `translateY(${rect.top * 0.15}px)`;
+}
+
+function updateAll() {
+  updateHeader();
+  updateHeroScrub();
+  if (updatePhilosophy) updatePhilosophy();
+  if (updatePillars) {
+    const state = updatePillars();
+    if (state) updatePillarsParallax(state.rect);
+  }
+  updateWorkspace();
+}
+
+function raf(time) {
+  if (lenis) lenis.raf(time);
+  updateAll();
+  requestAnimationFrame(raf);
+}
+requestAnimationFrame(raf);
+
+// Reveal on scroll (elementos não pinados: dores, depoimentos)
+const revealTargets = document.querySelectorAll("[data-reveal]");
 const observer = new IntersectionObserver(
   (entries) => {
     entries.forEach((entry) => {
@@ -152,5 +177,4 @@ const observer = new IntersectionObserver(
   },
   { threshold: 0.15 }
 );
-
 revealTargets.forEach((el) => observer.observe(el));
