@@ -25,8 +25,15 @@ function buildWhatsAppLink(message) {
   return `${base}?text=${encodeURIComponent(message)}`;
 }
 
-const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+
+// Modo leve: tela pequena, ponteiro touch ou preferência por menos animação usam a
+// versão sem scroll-jacking (mais fluida em hardware mais fraco / celular)
+const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+const isSmallViewport = window.matchMedia("(max-width: 760px)").matches;
+const isCoarsePointer = window.matchMedia("(pointer: coarse)").matches;
+const flatMode = prefersReducedMotion || isSmallViewport || isCoarsePointer;
+if (flatMode) document.documentElement.classList.add("flat-scroll");
 
 // Mobile nav toggle
 const navToggle = document.getElementById("nav-toggle");
@@ -41,19 +48,32 @@ mainNav.querySelectorAll("a").forEach((link) => {
   link.addEventListener("click", () => mainNav.classList.remove("is-open"));
 });
 
-// Sticky header state
+// Header muda de estado ao rolar (listener leve e passivo, não depende do loop pesado)
 const header = document.getElementById("site-header");
+let headerTicking = false;
 function updateHeader() {
   header.classList.toggle("is-scrolled", window.scrollY > 40);
+  headerTicking = false;
 }
+window.addEventListener(
+  "scroll",
+  () => {
+    if (!headerTicking) {
+      headerTicking = true;
+      requestAnimationFrame(updateHeader);
+    }
+  },
+  { passive: true }
+);
+updateHeader();
 
-// WhatsApp CTA (contact section)
+// WhatsApp CTA (contato)
 const contactWhatsApp = document.getElementById("contact-whatsapp");
 contactWhatsApp.href = buildWhatsAppLink(
   "Olá! Vim pelo site da Spaço Moviment e gostaria de marcar uma avaliação."
 );
 
-// Contact form: coleta nome/telefone e encaminha pro WhatsApp (site estático, sem backend)
+// Formulário de contato: coleta nome/telefone e encaminha pro WhatsApp (site estático, sem backend)
 const contactForm = document.getElementById("contact-form");
 contactForm.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -69,102 +89,121 @@ contactForm.addEventListener("submit", (event) => {
   window.open(buildWhatsAppLink(message), "_blank", "noopener");
 });
 
-// Smooth scroll (Lenis quando disponível; senão scroll nativo do navegador)
-let lenis = null;
-if (!prefersReducedMotion && typeof Lenis !== "undefined") {
-  lenis = new Lenis({
-    duration: 1.1,
-    smoothWheel: true,
-  });
-}
-
-// Herói cinematográfico: scroll controla o tempo do vídeo (scroll scrub)
 const heroSection = document.querySelector(".cinematic-hero");
 const heroVideo = document.getElementById("hero-video");
 
-function updateHeroScrub() {
-  if (prefersReducedMotion) return;
-  const duration = heroVideo.duration;
-  if (!duration || Number.isNaN(duration) || heroVideo.readyState < 1) return;
-  const rect = heroSection.getBoundingClientRect();
-  const scrollable = rect.height - window.innerHeight;
-  if (scrollable <= 0) return;
-  const progress = clamp(-rect.top / scrollable, 0, 1);
-  const targetTime = progress * duration;
-  if (Math.abs(heroVideo.currentTime - targetTime) > 0.03) {
-    heroVideo.currentTime = targetTime;
+if (flatMode) {
+  // Modo leve: vídeo toca em loop simples, sem scrub por scroll (seek constante é
+  // a maior causa de travamento em aparelhos mais fracos)
+  heroVideo.loop = true;
+  heroVideo.muted = true;
+  heroVideo.setAttribute("playsinline", "");
+  heroVideo.play().catch(() => {});
+
+  // Reaproveita o observer de revelação genérico pras seções que eram pinadas
+  document
+    .querySelectorAll(".philosophy-line, .pillar-card")
+    .forEach((el) => el.setAttribute("data-reveal", ""));
+} else {
+  // Smooth scroll (Lenis)
+  let lenis = null;
+  if (typeof Lenis !== "undefined") {
+    lenis = new Lenis({ duration: 1.1, smoothWheel: true });
   }
-}
 
-// Sequências pinadas (filosofia, pilares, espaço): uma etapa ativa por vez, calculada pelo scroll
-function createPinnedSequence(section, stepSelector) {
-  if (!section) return null;
-  const steps = Array.from(section.querySelectorAll(stepSelector));
-  if (!steps.length) return null;
+  // Cada seção pinada só calcula scroll/seek quando está perto da tela, em vez de
+  // rodar getBoundingClientRect toda hora pra seções que nem aparecem ainda
+  function observeInView(el, onChange) {
+    if (!el) return () => true;
+    let inView = true;
+    const io = new IntersectionObserver(
+      (entries) => entries.forEach((entry) => (inView = entry.isIntersecting)),
+      { rootMargin: "25% 0px 25% 0px" }
+    );
+    io.observe(el);
+    return () => inView;
+  }
 
-  return function update() {
-    const rect = section.getBoundingClientRect();
+  const heroInView = observeInView(heroSection);
+
+  function updateHeroScrub() {
+    const duration = heroVideo.duration;
+    if (!duration || Number.isNaN(duration) || heroVideo.readyState < 1) return;
+    const rect = heroSection.getBoundingClientRect();
     const scrollable = rect.height - window.innerHeight;
-    const progress = clamp(scrollable > 0 ? -rect.top / scrollable : 0, 0, 1);
-    const activeIndex = Math.min(steps.length - 1, Math.floor(progress * steps.length));
-    steps.forEach((el, i) => el.classList.toggle("is-active", i === activeIndex));
-    return { progress, activeIndex, rect };
-  };
-}
-
-const philosophySection = document.querySelector(".philosophy");
-const updatePhilosophy = createPinnedSequence(philosophySection, ".philosophy-line");
-
-const pillarsSection = document.querySelector(".pillars");
-const updatePillars = createPinnedSequence(pillarsSection, ".pillar-card");
-const pillarsBgImg = document.querySelector(".pillars-bg img");
-
-const workspaceSection = document.querySelector(".workspace");
-const workspaceBgs = Array.from(document.querySelectorAll(".workspace-bg"));
-const workspaceCaptions = Array.from(document.querySelectorAll(".workspace-caption"));
-
-function updateWorkspace() {
-  if (!workspaceSection || !workspaceBgs.length) return;
-  const rect = workspaceSection.getBoundingClientRect();
-  const scrollable = rect.height - window.innerHeight;
-  const progress = clamp(scrollable > 0 ? -rect.top / scrollable : 0, 0, 1);
-  const activeIndex = Math.min(workspaceBgs.length - 1, Math.floor(progress * workspaceBgs.length));
-
-  workspaceBgs.forEach((el, i) => {
-    const isActive = i === activeIndex;
-    el.classList.toggle("is-active", isActive);
-    if (isActive && !prefersReducedMotion) {
-      const img = el.querySelector("img");
-      if (img) img.style.transform = `translateY(${rect.top * 0.12}px)`;
+    if (scrollable <= 0) return;
+    const progress = clamp(-rect.top / scrollable, 0, 1);
+    const targetTime = progress * duration;
+    if (Math.abs(heroVideo.currentTime - targetTime) > 0.08) {
+      if (typeof heroVideo.fastSeek === "function") {
+        heroVideo.fastSeek(targetTime);
+      } else {
+        heroVideo.currentTime = targetTime;
+      }
     }
-  });
-  workspaceCaptions.forEach((el, i) => el.classList.toggle("is-active", i === activeIndex));
-}
-
-function updatePillarsParallax(rect) {
-  if (!pillarsBgImg || prefersReducedMotion) return;
-  pillarsBgImg.style.transform = `translateY(${rect.top * 0.15}px)`;
-}
-
-function updateAll() {
-  updateHeader();
-  updateHeroScrub();
-  if (updatePhilosophy) updatePhilosophy();
-  if (updatePillars) {
-    const state = updatePillars();
-    if (state) updatePillarsParallax(state.rect);
   }
-  updateWorkspace();
-}
 
-function raf(time) {
-  if (lenis) lenis.raf(time);
-  updateAll();
+  // Sequência pinada genérica: opacidade calculada direto do progresso do scroll
+  // (não por classe + transição CSS), pra o crossfade acompanhar exatamente a
+  // velocidade real do scroll. Cada linha tem uma janela centrada no meio do seu
+  // passo, com uma sobreposição mínima com as vizinhas (senão dá um "flash" em
+  // branco bem no instante exato da troca, quando as duas ficam em opacidade 0).
+  // O deslocamento vertical é direcional (quem ainda não chegou sobe de baixo,
+  // quem já passou sai por cima), pra separar as duas fisicamente durante a
+  // troca e não deixar frases de tamanhos diferentes se misturarem no meio.
+  // Usada tanto pelas seções de filosofia (podem existir várias) quanto pelos pilares.
+  const FADE_WIDTH = 0.06;
+  const HALF_WINDOW = 0.505;
+  const PLATEAU = HALF_WINDOW - FADE_WIDTH;
+  const TRANSLATE_PX = 70;
+
+  function createPinnedSequence(section, stepSelector) {
+    const steps = Array.from(section.querySelectorAll(stepSelector));
+    if (!steps.length) return null;
+    const isInView = observeInView(section);
+
+    return function update() {
+      if (!isInView()) return;
+      const rect = section.getBoundingClientRect();
+      const scrollable = rect.height - window.innerHeight;
+      const progress = clamp(scrollable > 0 ? -rect.top / scrollable : 0, 0, 1);
+      const stepProgress = progress * steps.length;
+      const activeIndex = Math.min(steps.length - 1, Math.floor(stepProgress));
+
+      steps.forEach((el, i) => {
+        const signedDist = stepProgress - (i + 0.5);
+        const opacity = clamp(1 - (Math.abs(signedDist) - PLATEAU) / FADE_WIDTH, 0, 1);
+        el.style.opacity = opacity;
+        el.style.transform = `translateY(${-signedDist * TRANSLATE_PX}px)`;
+        el.classList.toggle("is-active", i === activeIndex);
+      });
+    };
+  }
+
+  const pinnedUpdaters = [];
+  document.querySelectorAll(".philosophy").forEach((section) => {
+    const update = createPinnedSequence(section, ".philosophy-line");
+    if (update) pinnedUpdaters.push(update);
+  });
+  document.querySelectorAll(".pillars").forEach((section) => {
+    const update = createPinnedSequence(section, ".pillar-card");
+    if (update) pinnedUpdaters.push(update);
+  });
+
+  function updateAll() {
+    if (heroInView()) updateHeroScrub();
+    pinnedUpdaters.forEach((update) => update());
+  }
+
+  function raf(time) {
+    if (lenis) lenis.raf(time);
+    updateAll();
+    requestAnimationFrame(raf);
+  }
   requestAnimationFrame(raf);
 }
-requestAnimationFrame(raf);
 
-// Reveal on scroll (elementos não pinados: dores, depoimentos)
+// Reveal on scroll (elementos não pinados: dores, depoimentos, e tudo marcado no modo leve)
 const revealTargets = document.querySelectorAll("[data-reveal]");
 const observer = new IntersectionObserver(
   (entries) => {
