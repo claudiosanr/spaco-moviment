@@ -134,7 +134,7 @@ if (flatMode) {
     if (scrollable <= 0) return;
     const progress = clamp(-rect.top / scrollable, 0, 1);
     const targetTime = progress * duration;
-    if (Math.abs(heroVideo.currentTime - targetTime) > 0.08) {
+    if (Math.abs(heroVideo.currentTime - targetTime) > 0.02) {
       if (typeof heroVideo.fastSeek === "function") {
         heroVideo.fastSeek(targetTime);
       } else {
